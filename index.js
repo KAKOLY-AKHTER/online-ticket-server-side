@@ -127,15 +127,15 @@ app.get('/user/role', verifyJWT, async (req, res) => {
   res.send({ role: result?.role || 'user' }); // fallback user
 });
 
-// Make vendor (admin only)
-app.patch('/users/:email/make-vendor', verifyJWT, verifyAdmin, async (req, res) => {
-  const email = req.params.email;
-  const result = await usersCollection.updateOne(
-    { email },
-    { $set: { role: 'vendor' } }
-  );
-  res.send(result);
-});
+// // Make vendor (admin only)
+// app.patch('/users/:email/make-vendor', verifyJWT, verifyAdmin, async (req, res) => {
+//   const email = req.params.email;
+//   const result = await usersCollection.updateOne(
+//     { email },
+//     { $set: { role: 'vendor' } }
+//   );
+//   res.send(result);
+// });
 
 
 app.get('/vendor/tickets', verifyJWT, verifyVendor, async (req, res) => {
@@ -146,16 +146,109 @@ app.get('/vendor/tickets', verifyJWT, verifyVendor, async (req, res) => {
   res.send(tickets);
 });
 
-
-// Make admin (admin only)
-app.patch('/users/:email/make-admin', verifyJWT, verifyAdmin, async (req, res) => {
-  const email = req.params.email;
-  const result = await usersCollection.updateOne(
-    { email },
-    { $set: { role: 'admin' } }
-  );
-  res.send(result);
+app.delete("/vendor/tickets/:id", verifyJWT, async (req, res) => {
+  const id = req.params.id;
+  await ticketsCollection.deleteOne({ _id: new ObjectId(id) });
+  res.send({ message: "Ticket deleted" });
 });
+
+app.get("/vendor/tickets/:id", verifyJWT, async (req, res) => {
+  const id = req.params.id;
+
+  try {
+    const ticket = await ticketsCollection.findOne({ _id: new ObjectId(id) });
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
+    res.send(ticket);
+  } catch (err) {
+    console.error("GET /vendor/tickets/:id error:", err);
+    res.status(500).json({ message: "Failed to fetch ticket", error: err.message });
+  }
+});
+
+app.patch("/vendor/tickets/:id", verifyJWT, async (req, res) => {
+  const id = req.params.id;
+  const updateData = req.body;
+
+  try {
+    const result = await ticketsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateData }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
+
+    if (result.modifiedCount === 0) {
+      return res.status(200).json({ message: "No changes made" });
+    }
+
+    res.send({ message: "Ticket updated", result });
+  } catch (err) {
+    console.error("PATCH /vendor/tickets/:id error:", err);
+    res.status(500).json({ message: "Failed to update ticket", error: err.message });
+  }
+});
+
+app.get("/vendor/requests", verifyJWT, async (req, res) => {
+  const vendorEmail = req.query.email;
+
+  try {
+    const requests = await bookingsCollection.find({ vendorEmail }).toArray();
+    res.send(requests);
+  } catch (err) {
+    console.error("GET /vendor/requests error:", err);
+    res.status(500).json({ message: "Failed to fetch booking requests", error: err.message });
+  }
+});
+
+app.patch("/vendor/bookings/:id/status", verifyJWT, async (req, res) => {
+  const id = req.params.id;
+  const { status } = req.body;
+
+  try {
+    const result = await bookingsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status } }
+    );
+if (result.matchedCount === 0) {
+  return res.status(404).json({ message: "Booking not found" });
+}
+if (result.modifiedCount === 0) {
+  return res.status(200).json({ message: "No changes made" });
+}
+
+
+    res.send({ message: "Booking status updated", result });
+  } catch (err) {
+    console.error("PATCH /vendor/bookings/:id/status error:", err);
+    res.status(500).json({ message: "Failed to update booking", error: err.message });
+  }
+});
+ 
+app.post("/bookings", async (req, res) => {
+  const booking = req.body;
+  // must include vendorEmail
+  if (!booking.vendorEmail) {
+    return res.status(400).json({ message: "vendorEmail required" });
+  }
+  await bookingsCollection.insertOne({ ...booking, status: "pending" });
+  res.send({ message: "Booking created" });
+});
+
+
+
+// // Make admin (admin only)
+// app.patch('/users/:email/make-admin', verifyJWT, verifyAdmin, async (req, res) => {
+//   const email = req.params.email;
+//   const result = await usersCollection.updateOne(
+//     { email },
+//     { $set: { role: 'admin' } }
+//   );
+//   res.send(result);
+// });
 
 // Get all users (admin only)
 app.get('/users', verifyJWT, verifyAdmin, async (req, res) => {
@@ -163,19 +256,7 @@ app.get('/users', verifyJWT, verifyAdmin, async (req, res) => {
   res.send(result);
 });
 
-// Mark vendor as fraud (admin only)
-app.patch('/users/:email/fraud', verifyJWT, verifyAdmin, async (req, res) => {
-  const email = req.params.email;
-  await usersCollection.updateOne(
-    { email },
-    { $set: { fraud: true, status: 'blocked' } }
-  );
-  await ticketsCollection.updateMany(
-    { vendorEmail: email },
-    { $set: { approved: false } }
-  );
-  res.send({ message: 'Vendor marked as fraud' });
-});
+
 
 
 app.get("/admin/tickets", verifyJWT, verifyAdmin, async (req, res) => {
@@ -319,24 +400,24 @@ app.get('/vendor/bookings', verifyJWT, verifyVendor, async (req, res) => {
 });
 
 
-app.get('/vendor/revenue', verifyJWT, verifyVendor, async (req, res) => {
-  const email = req.tokenEmail;
-  const result = await bookingsCollection.aggregate([
-    { $match: { status: "paid", userEmail: { $ne: email } } },
-    { $lookup: { from: "tickets", localField: "ticketId", foreignField: "_id", as: "ticket" } },
-    { $unwind: "$ticket" },
-    { $match: { "ticket.vendorEmail": email } },
-    {
-      $group: {
-        _id: null,
-        totalRevenue: { $sum: "$totalPrice" },
-        totalTicketsSold: { $sum: "$quantity" },
-        totalTicketsAdded: { $sum: 1 }
-      }
-    }
-  ]).toArray();
-  res.send(result[0] || {});
-});
+// app.get('/vendor/revenue', verifyJWT, verifyVendor, async (req, res) => {
+//   const email = req.tokenEmail;
+//   const result = await bookingsCollection.aggregate([
+//     { $match: { status: "paid", userEmail: { $ne: email } } },
+//     { $lookup: { from: "tickets", localField: "ticketId", foreignField: "_id", as: "ticket" } },
+//     { $unwind: "$ticket" },
+//     { $match: { "ticket.vendorEmail": email } },
+//     {
+//       $group: {
+//         _id: null,
+//         totalRevenue: { $sum: "$totalPrice" },
+//         totalTicketsSold: { $sum: "$quantity" },
+//         totalTicketsAdded: { $sum: 1 }
+//       }
+//     }
+//   ]).toArray();
+//   res.send(result[0] || {});
+// });
 
 
 
@@ -588,39 +669,39 @@ app.get('/vendor/revenue', verifyJWT, verifyVendor, async (req, res) => {
       }
     });
 
-  // --- Update booking status (vendor/admin) ---
-    // body: { status: "accepted" | "rejected" | "pending" }
-    app.patch("/bookings/:id/status", verifyJWT, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const { status } = req.body;
-        if (!status) return res.status(400).json({ message: "status is required" });
+  // // --- Update booking status (vendor/admin) ---
+  //   // body: { status: "accepted" | "rejected" | "pending" }
+  //   app.patch("/bookings/:id/status", verifyJWT, async (req, res) => {
+  //     try {
+  //       const id = req.params.id;
+  //       const { status } = req.body;
+  //       if (!status) return res.status(400).json({ message: "status is required" });
 
-        const updateRes = await bookingsCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { status } }
-        );
-        res.json({ message: "Booking status updated", result: updateRes });
-      } catch (err) {
-        console.error("patch bookings status error:", err);
-        res.status(500).json({ message: "Failed to update status", error: err.message });
-      }
-    });
+  //       const updateRes = await bookingsCollection.updateOne(
+  //         { _id: new ObjectId(id) },
+  //         { $set: { status } }
+  //       );
+  //       res.json({ message: "Booking status updated", result: updateRes });
+  //     } catch (err) {
+  //       console.error("patch bookings status error:", err);
+  //       res.status(500).json({ message: "Failed to update status", error: err.message });
+  //     }
+  //   });
 
   
 
-    app.patch('/tickets/:id/approve', verifyJWT, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const result = await ticketsCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { approved: true } }
-        );
-        res.send({ message: "Ticket approved successfully", result });
-      } catch (err) {
-        res.status(500).send({ message: 'Failed to approve ticket', err });
-      }
-    });
+    // app.patch('/tickets/:id/approve', verifyJWT, async (req, res) => {
+    //   try {
+    //     const id = req.params.id;
+    //     const result = await ticketsCollection.updateOne(
+    //       { _id: new ObjectId(id) },
+    //       { $set: { approved: true } }
+    //     );
+    //     res.send({ message: "Ticket approved successfully", result });
+    //   } catch (err) {
+    //     res.status(500).send({ message: 'Failed to approve ticket', err });
+    //   }
+    // });
 
 
     app.get('/tickets', async (req, res) => {
