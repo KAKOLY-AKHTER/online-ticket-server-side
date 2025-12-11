@@ -124,19 +124,11 @@ app.post("/user", async (req, res) => {
 // Get a user's role
 app.get('/user/role', verifyJWT, async (req, res) => {
   const result = await usersCollection.findOne({ email: req.tokenEmail });
-  res.send({ role: result?.role || 'user' }); // fallback user
+  res.send({ role: result?.role || 'user' });
 });
 
-// // Make vendor (admin only)
-// app.patch('/users/:email/make-vendor', verifyJWT, verifyAdmin, async (req, res) => {
-//   const email = req.params.email;
-//   const result = await usersCollection.updateOne(
-//     { email },
-//     { $set: { role: 'vendor' } }
-//   );
-//   res.send(result);
-// });
 
+// .............vendor.............
 
 app.get('/vendor/tickets', verifyJWT, verifyVendor, async (req, res) => {
   const email = req.query.email;
@@ -192,17 +184,19 @@ app.patch("/vendor/tickets/:id", verifyJWT, async (req, res) => {
   }
 });
 
-app.get("/vendor/requests", verifyJWT, async (req, res) => {
-  const vendorEmail = req.query.email;
-
+app.get("/vendor/requests", verifyJWT, verifyVendor, async (req, res) => {
   try {
+    const vendorEmail = req.query.email;
+    if (!vendorEmail || vendorEmail !== req.tokenEmail) {
+      return res.status(403).json({ message: "Unauthorized vendor access" });
+    }
     const requests = await bookingsCollection.find({ vendorEmail }).toArray();
     res.send(requests);
   } catch (err) {
-    console.error("GET /vendor/requests error:", err);
     res.status(500).json({ message: "Failed to fetch booking requests", error: err.message });
   }
 });
+
 
 app.patch("/vendor/bookings/:id/status", verifyJWT, async (req, res) => {
   const id = req.params.id;
@@ -228,27 +222,8 @@ if (result.modifiedCount === 0) {
   }
 });
  
-app.post("/bookings", async (req, res) => {
-  const booking = req.body;
-  // must include vendorEmail
-  if (!booking.vendorEmail) {
-    return res.status(400).json({ message: "vendorEmail required" });
-  }
-  await bookingsCollection.insertOne({ ...booking, status: "pending" });
-  res.send({ message: "Booking created" });
-});
 
-
-
-// // Make admin (admin only)
-// app.patch('/users/:email/make-admin', verifyJWT, verifyAdmin, async (req, res) => {
-//   const email = req.params.email;
-//   const result = await usersCollection.updateOne(
-//     { email },
-//     { $set: { role: 'admin' } }
-//   );
-//   res.send(result);
-// });
+// .....................admin.,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 
 // Get all users (admin only)
 app.get('/users', verifyJWT, verifyAdmin, async (req, res) => {
@@ -353,7 +328,7 @@ app.patch("/admin/tickets/:id/advertise", verifyJWT, verifyAdmin, async (req, re
   }
 });
 
-
+// ..................stripe................................
 
 app.post('/create-checkout-session', async (req, res) => {
   try {
@@ -387,6 +362,56 @@ cancel_url: `${process.env.DOMAIN_KEY}/payment-cancel`,
 
 
 
+// //     //payment post
+app.post("/create-payment-intent", verifyJWT, async (req, res) => {
+  try {
+    const { bookingId } = req.body;
+
+    // Find booking
+    const booking = await bookingsCollection.findOne({ _id: new ObjectId(bookingId) });
+    if (!booking) return res.status(404).json({ message: "Booking not found" });
+
+    // Check ownership
+    if (booking.userEmail !== req.tokenEmail) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    // Only accepted bookings can be paid
+    if (booking.status !== "accepted") {
+      return res.status(400).json({ message: "Payment allowed only after acceptance" });
+    }
+
+    // Check departure time
+    const eventTime = new Date(`${booking.departureDate}T${booking.departureTime}:00`).getTime();
+    if (eventTime <= Date.now()) {
+      return res.status(400).json({ message: "Payment closed: departure time passed" });
+    }
+
+    // Stripe amount in cents
+    const amount = Math.round(booking.totalPrice * 100);
+
+    // Create PaymentIntent
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount,
+      currency: "usd",
+      metadata: {
+        bookingId: bookingId,
+        ticketId: booking.ticketId.toString(),
+        quantity: booking.quantity,
+        title: booking.title,
+      },
+      automatic_payment_methods: { enabled: true }, 
+    });
+
+    res.json({ clientSecret: paymentIntent.client_secret });
+  } catch (err) {
+    console.error("Payment Intent Error:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+
 
 
 app.get('/vendor/bookings', verifyJWT, verifyVendor, async (req, res) => {
@@ -400,102 +425,69 @@ app.get('/vendor/bookings', verifyJWT, verifyVendor, async (req, res) => {
 });
 
 
-// app.get('/vendor/revenue', verifyJWT, verifyVendor, async (req, res) => {
-//   const email = req.tokenEmail;
-//   const result = await bookingsCollection.aggregate([
-//     { $match: { status: "paid", userEmail: { $ne: email } } },
-//     { $lookup: { from: "tickets", localField: "ticketId", foreignField: "_id", as: "ticket" } },
-//     { $unwind: "$ticket" },
-//     { $match: { "ticket.vendorEmail": email } },
-//     {
-//       $group: {
-//         _id: null,
-//         totalRevenue: { $sum: "$totalPrice" },
-//         totalTicketsSold: { $sum: "$quantity" },
-//         totalTicketsAdded: { $sum: 1 }
-//       }
-//     }
-//   ]).toArray();
-//   res.send(result[0] || {});
-// });
+app.get("/vendor/revenue", verifyJWT, async (req, res) => {
+  const email = req.query.email;
+
+  const totalAdded = await ticketsCollection.countDocuments({ vendorEmail: email });
+  const soldBookings = await bookingsCollection.find({ vendorEmail: email, status: "paid" }).toArray();
+
+  const ticketsSold = soldBookings.reduce((sum, b) => sum + b.quantity, 0);
+  const totalRevenue = soldBookings.reduce((sum, b) => sum + b.totalPrice, 0);
+
+  res.send({ totalAdded, ticketsSold, totalRevenue });
+});
 
 
 
-
-
-    //payment post
-
-  app.post("/create-payment-intent", verifyJWT, async (req, res) => {
-    try {
-        const { price, bookingId, ticketId, quantity, title } = req.body;
-
-        const amount = price * quantity * 100;
-
-        const paymentIntent = await stripe.paymentIntents.create({
-            amount: amount,
-            currency: "usd",
-            metadata: {
-                bookingId,
-                ticketId,
-                quantity,
-                title
-            }
-        });
-
-        res.send({
-            clientSecret: paymentIntent.client_secret
-        });
-
-    } catch (err) {
-        res.status(500).send({ message: err.message });
-    }
+app.get("/bookings/:id", verifyJWT, async (req, res) => {
+  const id = req.params.id;
+  const booking = await bookingsCollection.findOne({ _id: new ObjectId(id) });
+  res.send(booking);
 });
 
 
     // --- Save transaction record ---
 
-   app.post("/save-transaction", verifyJWT, async (req, res) => {
-    try {
-        const {
-            transactionId,
-            amount,
-            ticketId,
-            bookingId,
-            title,
-            quantity
-        } = req.body;
+ app.post("/save-transaction", verifyJWT, async (req, res) => {
+  try {
+    const { transactionId, bookingId } = req.body;
 
-        // 1️⃣ Save Transaction
-        const transactionData = {
-            transactionId,
-            amount,
-            title,
-            userEmail: req.tokenEmail,
-            ticketId,
-            bookingId,
-            quantity,
-            date: new Date()
-        };
+    const booking = await bookingsCollection.findOne({ _id: new ObjectId(bookingId) });
+    if (!booking) return res.status(404).send({ message: "Booking not found" });
+    if (booking.userEmail !== req.tokenEmail) return res.status(403).send({ message: "Forbidden" });
 
-        await transactionsCollection.insertOne(transactionData);
+    // Prevent double-processing
+    if (booking.status === "paid") return res.status(200).send({ success: true, message: "Already paid" });
 
-        // 2️⃣ Update Booking Status → paid
-        await bookingsCollection.updateOne(
-            { _id: new ObjectId(bookingId) },
-            { $set: { status: "paid" } }
-        );
+    const transactionData = {
+      transactionId,
+      amount: booking.totalPrice,
+      title: booking.title,
+      userEmail: req.tokenEmail,
+      ticketId: booking.ticketId,
+      bookingId: booking._id,
+      quantity: booking.quantity,
+      date: new Date()
+    };
 
-        // 3️⃣ Reduce Ticket Quantity
-        await ticketsCollection.updateOne(
-            { _id: new ObjectId(ticketId) },
-            { $inc: { availableSeats: -quantity } }
-        );
+    await transactionsCollection.insertOne(transactionData);
 
-        res.send({ success: true });
+    // Mark booking paid
+    await bookingsCollection.updateOne(
+      { _id: booking._id },
+      { $set: { status: "paid" } }
+    );
 
-    } catch (err) {
-        res.status(500).send({ message: err.message });
-    }
+    // Decrement ticket quantity exactly once (Option B)
+    await ticketsCollection.updateOne(
+      { _id: new ObjectId(booking.ticketId) },
+      { $inc: { quantity: -booking.quantity } }
+    );
+
+    res.send({ success: true });
+  } catch (err) {
+    res.status(500).send({ message: err.message });
+  }
 });
 
      // --- Get user transactions ---
@@ -550,24 +542,6 @@ app.get('/vendor/bookings', verifyJWT, verifyVendor, async (req, res) => {
     });
 
 
-    // app.patch('/bookings/:id/status', verifyJWT, async (req, res) => {
-    //   try {
-    //     const id = req.params.id;
-    //     const { status } = req.body;
-
-    //     const result = await bookingsCollection.updateOne(
-    //       { _id: new ObjectId(id) },
-    //       { $set: { status } }
-    //     );
-
-    //     res.send({ message: "Booking updated", result });
-    //   } catch (err) {
-    //     res.status(500).send({ message: "Failed to update status" });
-    //   }
-    // });
-
-
-
     app.patch('/bookings/:id/paid', verifyJWT, async (req, res) => {
       const id = req.params.id;
 
@@ -593,120 +567,62 @@ app.get('/vendor/bookings', verifyJWT, verifyVendor, async (req, res) => {
     });
 
   
+app.post('/bookings', verifyJWT, async (req, res) => {
+  try {
+    const { ticketId, quantity } = req.body;
+    const ticket = await ticketsCollection.findOne({ _id: new ObjectId(ticketId.trim()) });
+    if (!ticket) return res.status(404).send({ message: "Ticket not found" });
 
-    app.post('/bookings', verifyJWT, async (req, res) => {
-      try {
-        const { ticketId, quantity } = req.body;
+    const departure = new Date(`${ticket.departureDate} ${ticket.departureTime}`);
+    if (departure < new Date()) return res.status(400).send({ message: "Departure time has already passed" });
 
-        const ticket = await ticketsCollection.findOne({ _id: new ObjectId(ticketId.trim()) });
-        if (!ticket) return res.status(404).send({ message: "Ticket not found" });
+    if (quantity <= 0) return res.status(400).send({ message: "Invalid quantity" });
+    if (quantity > ticket.quantity) return res.status(400).send({ message: "Booking quantity exceeds available tickets" });
 
-        // Departure time check
-        const departure = new Date(`${ticket.departureDate} ${ticket.departureTime}`);
-        if (departure < new Date()) {
-          return res.status(400).send({ message: "Departure time has already passed" });
-        }
+    const formattedTime = new Date(`1970-01-01 ${ticket.departureTime}`).toTimeString().slice(0, 5);
 
-        // Quantity check
-        if (ticket.quantity === 0) {
-          return res.status(400).send({ message: "No tickets available" });
-        }
-        if (quantity > ticket.quantity) {
-          return res.status(400).send({ message: "Booking quantity exceeds available tickets" });
-        }
+    const booking = {
+      ticketId: ticket._id, 
+      userEmail: req.tokenEmail,
+      vendorEmail: ticket.vendorEmail,
+      quantity,
+      status: "pending",
+      createdAt: new Date(),
+      title: ticket.title,
+      image: ticket.image,
+      price: ticket.price,
+      totalPrice: ticket.price * quantity,
+      departureDate: ticket.departureDate,
+      departureTime: formattedTime,
+      transportType: ticket.transportType,
+      from: ticket.from,
+      to: ticket.to,
+      perks: ticket.perks || []
+    };
 
-        let rawTime = ticket.departureTime;
-        let formattedTime = new Date(`1970-01-01 ${rawTime}`).toTimeString().slice(0, 5);
-
-
-        const booking = {
-          ticketId,
-          userEmail: req.tokenEmail,
-          quantity,
-          status: "Pending",
-          createdAt: new Date(),
-          title: ticket.title,
-          image: ticket.image,
-          price: ticket.price,
-          totalPrice: ticket.price * quantity,
-          departureDate: ticket.departureDate,
-          departureTime: formattedTime,
-          transportType: ticket.transportType,
-          from: ticket.from,
-          to: ticket.to,
-
-          perks: ticket.perks || []
-        };
-
-        console.log(booking);
-
-        // Booking save 
-        await bookingsCollection.insertOne(booking);
-
-
-        await ticketsCollection.updateOne(
-          { _id: new ObjectId(ticketId) },
-          { $inc: { quantity: -quantity } }
-        );
-
-        res.send({ message: "Booking successful", booking });
-      } catch (err) {
-        res.status(500).send({ message: "Failed to book ticket", err });
-      }
-    });
-
-
-    app.get('/bookings', verifyJWT, async (req, res) => {
-      try {
-
-        const email = req.tokenEmail;
-        console.log(email);
-
-        const result = await bookingsCollection.find({ userEmail: email }).toArray();
-        res.send(result);
-      } catch (err) {
-        res.status(500).send({ message: "Failed to fetch bookings" });
-      }
-    });
-
-  // // --- Update booking status (vendor/admin) ---
-  //   // body: { status: "accepted" | "rejected" | "pending" }
-  //   app.patch("/bookings/:id/status", verifyJWT, async (req, res) => {
-  //     try {
-  //       const id = req.params.id;
-  //       const { status } = req.body;
-  //       if (!status) return res.status(400).json({ message: "status is required" });
-
-  //       const updateRes = await bookingsCollection.updateOne(
-  //         { _id: new ObjectId(id) },
-  //         { $set: { status } }
-  //       );
-  //       res.json({ message: "Booking status updated", result: updateRes });
-  //     } catch (err) {
-  //       console.error("patch bookings status error:", err);
-  //       res.status(500).json({ message: "Failed to update status", error: err.message });
-  //     }
-  //   });
-
+    await bookingsCollection.insertOne(booking);
   
 
-    // app.patch('/tickets/:id/approve', verifyJWT, async (req, res) => {
-    //   try {
-    //     const id = req.params.id;
-    //     const result = await ticketsCollection.updateOne(
-    //       { _id: new ObjectId(id) },
-    //       { $set: { approved: true } }
-    //     );
-    //     res.send({ message: "Ticket approved successfully", result });
-    //   } catch (err) {
-    //     res.status(500).send({ message: 'Failed to approve ticket', err });
-    //   }
-    // });
+    res.send({ message: "Booking successful", booking });
+  } catch (err) {
+    res.status(500).send({ message: "Failed to book ticket", err });
+  }
+});
 
+
+app.get('/bookings', verifyJWT, async (req, res) => {
+  try {
+    const email = req.tokenEmail;
+    const result = await bookingsCollection.find({ userEmail: email }).toArray();
+    res.send(result);
+  } catch (err) {
+    res.status(500).send({ message: "Failed to fetch bookings" });
+  }
+});
 
     app.get('/tickets', async (req, res) => {
       try {
-        const result = await ticketsCollection.find({ approved: true }).toArray(); // ✅ শুধু approved tickets
+        const result = await ticketsCollection.find({ approved: true }).toArray(); 
         res.send(result);
       } catch (err) {
         res.status(500).send({ message: 'Failed to fetch tickets', err });
@@ -744,8 +660,10 @@ app.get('/vendor/bookings', verifyJWT, verifyVendor, async (req, res) => {
   }
 });
 
-     // Add ticket (vendor) - this endpoint currently public; you can protect via verifyJWT and role checks
+     // Add ticket (vendor) 
     app.post("/tickets", verifyJWT, async (req, res) => {
+      console.log(req.tokenEmail);
+      
       try {
         const payload = {
           ...req.body,
@@ -763,7 +681,7 @@ app.get('/vendor/bookings', verifyJWT, verifyVendor, async (req, res) => {
     });
 
 
-     // Approve ticket (admin) - leave verifyJWT; add role check on server side as needed
+     // Approve ticket (admin) 
     app.patch("/tickets/:id/approve", verifyJWT, async (req, res) => {
       try {
         const id = req.params.id;
@@ -775,11 +693,11 @@ app.get('/vendor/bookings', verifyJWT, verifyVendor, async (req, res) => {
       }
     });
 
-    // Advertise toggle (admin) - ensure advertised <= 6
+    // Advertise toggle (admin) advertised <= 6
     app.patch("/tickets/:id/advertise", verifyJWT, async (req, res) => {
       try {
         const id = req.params.id;
-        const { advertise } = req.body; // boolean
+        const { advertise } = req.body;
         if (advertise) {
           const count = await ticketsCollection.countDocuments({ advertised: true });
           if (count >= 6) return res.status(400).json({ message: "Maximum 6 advertised tickets allowed" });
@@ -791,13 +709,12 @@ app.get('/vendor/bookings', verifyJWT, verifyVendor, async (req, res) => {
         res.status(500).json({ message: "Failed to update advertise", error: err.message });
       }
     });
-    // Send a ping to confirm a successful connection
-    // await client.db('admin').command({ ping: 1 })
+
     console.log(
       'Pinged your deployment. You successfully connected to MongoDB!'
     )
   } finally {
-    // Ensures that the client will close when you finish/error
+   
   }
 }
 run().catch(console.dir)
