@@ -138,13 +138,13 @@ app.get('/vendor/tickets', verifyJWT, verifyVendor, async (req, res) => {
   res.send(tickets);
 });
 
-app.delete("/vendor/tickets/:id", verifyJWT, async (req, res) => {
+app.delete("/vendor/tickets/:id", verifyJWT,verifyVendor, async (req, res) => {
   const id = req.params.id;
   await ticketsCollection.deleteOne({ _id: new ObjectId(id) });
   res.send({ message: "Ticket deleted" });
 });
 
-app.get("/vendor/tickets/:id", verifyJWT, async (req, res) => {
+app.get("/vendor/tickets/:id", verifyJWT,verifyVendor, async (req, res) => {
   const id = req.params.id;
 
   try {
@@ -159,7 +159,7 @@ app.get("/vendor/tickets/:id", verifyJWT, async (req, res) => {
   }
 });
 
-app.patch("/vendor/tickets/:id", verifyJWT, async (req, res) => {
+app.patch("/vendor/tickets/:id", verifyJWT,verifyVendor, async (req, res) => {
   const id = req.params.id;
   const updateData = req.body;
 
@@ -198,7 +198,7 @@ app.get("/vendor/requests", verifyJWT, verifyVendor, async (req, res) => {
 });
 
 
-app.patch("/vendor/bookings/:id/status", verifyJWT, async (req, res) => {
+app.patch("/vendor/bookings/:id/status", verifyJWT,verifyVendor, async (req, res) => {
   const id = req.params.id;
   const { status } = req.body;
 
