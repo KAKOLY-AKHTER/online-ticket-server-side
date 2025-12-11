@@ -362,7 +362,7 @@ cancel_url: `${process.env.DOMAIN_KEY}/payment-cancel`,
 
 
 
-// //     //payment post
+     //payment post
 app.post("/create-payment-intent", verifyJWT, async (req, res) => {
   try {
     const { bookingId } = req.body;
@@ -409,8 +409,6 @@ app.post("/create-payment-intent", verifyJWT, async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
-
-
 
 
 
@@ -644,7 +642,7 @@ app.get('/bookings', verifyJWT, async (req, res) => {
    app.get("/ticket/advertised", async (req, res) => {
  
      const result = await ticketsCollection.find({ advertised: true, approved: true }).limit(6).toArray();
-    console.log("Advertised tickets:", result); // Debug
+    console.log("Advertised tickets:", result); 
     res.json(result);
 });
 
@@ -652,7 +650,7 @@ app.get('/bookings', verifyJWT, async (req, res) => {
    app.get("/ticket/latest", async (req, res) => {
   try {
     const result = await ticketsCollection.find({ approved: true }).sort({ createdAt: -1 }).limit(8).toArray();
-    console.log("Latest tickets:", result); // Debug
+    console.log("Latest tickets:", result); 
     res.json(result);
   } catch (err) {
     console.error("tickets/latest error:", err);
