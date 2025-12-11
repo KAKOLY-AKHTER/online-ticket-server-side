@@ -26,3 +26,4 @@ It handles **authentication, booking logic, payment intent creation, and transac
 - `stripe` → Stripe payment API
 - `morgan` → Logging
 - `nodemon` → Development server auto-restart
+
