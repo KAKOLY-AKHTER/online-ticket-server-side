@@ -26,7 +26,11 @@ const app = express()
 // middleware
 app.use(
   cors({
-    origin: [process.env.DOMAIN_KEY],
+    origin: [
+      process.env.DOMAIN_KEY,
+      process.env.LOCAL_KEY
+    
+    ],
     credentials: true,
     optionSuccessStatus: 200,
   })
