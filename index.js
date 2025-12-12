@@ -235,24 +235,136 @@ app.get('/users', verifyJWT, verifyAdmin, async (req, res) => {
 
 
 app.get("/admin/tickets", verifyJWT, verifyAdmin, async (req, res) => {
-  const tickets = await ticketsCollection.find({ approved: true }).toArray();
+  const tickets = await ticketsCollection.find({}).toArray(); 
   res.send(tickets);
 });
 
+
+// Approve/Reject ticket
 app.patch("/admin/tickets/:id/approve", verifyJWT, verifyAdmin, async (req, res) => {
   try {
     const id = req.params.id;
     const { approve } = req.body;
+
+    const newStatus = approve ? "approved" : "rejected";
+
     const result = await ticketsCollection.updateOne(
       { _id: new ObjectId(id) },
-      { $set: { approved: !!approve } }
+      { $set: { 
+         status: newStatus,     
+          approved: approve,  
+      } }
     );
-    res.json({ message: "Ticket status updated", result });
+
+    res.json({ message: `Ticket ${newStatus}`, result });
   } catch (err) {
-    console.error("Approve error:", err);
     res.status(500).json({ message: "Failed to update ticket", error: err.message });
   }
 });
+
+    app.get('/tickets', async (req, res) => {
+      try {
+        const result = await ticketsCollection.find({ approved: true }).toArray(); 
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ message: 'Failed to fetch tickets', err });
+      }
+    });
+ 
+    app.get('/tickets/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+        const result = await ticketsCollection.findOne({ _id: new ObjectId(id) });
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ message: 'Failed to fetch ticket details', err });
+      }
+    });
+
+
+     // Advertised tickets (limit 6)
+   app.get("/ticket/advertised", async (req, res) => {
+ 
+     const result = await ticketsCollection.find({ advertised: true, approved: true }).limit(6).toArray();
+    console.log("Advertised tickets:", result); 
+    res.json(result);
+});
+
+    // Latest tickets (8)
+   app.get("/ticket/latest", async (req, res) => {
+  try {
+    const result = await ticketsCollection.find({ approved: true }).sort({ createdAt: -1 }).limit(8).toArray();
+    console.log("Latest tickets:", result); 
+    res.json(result);
+  } catch (err) {
+    console.error("tickets/latest error:", err);
+    res.status(500).json({ message: "Failed to fetch latest tickets", error: err.message });
+  }
+});
+
+     // Add ticket (vendor) 
+    app.post("/tickets", verifyJWT, async (req, res) => {
+      console.log(req.tokenEmail);
+      
+      try {
+        const payload = {
+          ...req.body,
+          createdAt: new Date(),
+          approved: false,
+              status: "pending", 
+          advertised: false,
+          vendorEmail: req.tokenEmail,
+        };
+        const result = await ticketsCollection.insertOne(payload);
+        res.json({ message: "Ticket added (pending approval)", insertedId: result.insertedId });
+      } catch (err) {
+        console.error("tickets POST error:", err);
+        res.status(500).json({ message: "Failed to add ticket", error: err.message });
+      }
+    });
+
+app.patch("/admin/users/:id/status", verifyJWT, verifyAdmin, async (req, res) => {
+  const id = req.params.id;
+  const { status } = req.body;
+  const result = await usersCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { status } }
+  );
+  res.json({ message: `User ${status}`, result });
+});
+
+   
+
+    // Advertise toggle (admin) advertised <= 6
+    app.patch("/tickets/:id/advertise", verifyJWT, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { advertise } = req.body;
+        if (advertise) {
+          const count = await ticketsCollection.countDocuments({ advertised: true });
+          if (count >= 6) return res.status(400).json({ message: "Maximum 6 advertised tickets allowed" });
+        }
+        const result = await ticketsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { advertised: !!advertise } });
+        res.json({ message: "Advertise toggled", result });
+      } catch (err) {
+        console.error("tickets advertise error:", err);
+        res.status(500).json({ message: "Failed to update advertise", error: err.message });
+      }
+    });
+
+ //  // Approve ticket (admin) 
+    // app.patch("/tickets/:id/approve", verifyJWT, async (req, res) => {
+    //   try {
+    //     const id = req.params.id;
+    //     const result = await ticketsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { approved: true } });
+    //     res.json({ message: "Ticket approved", result });
+    //   } catch (err) {
+    //     console.error("tickets approve error:", err);
+    //     res.status(500).json({ message: "Failed to approve ticket", error: err.message });
+    //   }
+    // });
+
+
 
 app.get('/admin/users', verifyJWT, verifyAdmin, async (req, res) => {
   try {
@@ -618,95 +730,7 @@ app.get('/bookings', verifyJWT, async (req, res) => {
   }
 });
 
-    app.get('/tickets', async (req, res) => {
-      try {
-        const result = await ticketsCollection.find({ approved: true }).toArray(); 
-        res.send(result);
-      } catch (err) {
-        res.status(500).send({ message: 'Failed to fetch tickets', err });
-      }
-    });
- 
-    app.get('/tickets/:id', async (req, res) => {
-      try {
-        const id = req.params.id;
-        const result = await ticketsCollection.findOne({ _id: new ObjectId(id) });
-        res.send(result);
-      } catch (err) {
-        res.status(500).send({ message: 'Failed to fetch ticket details', err });
-      }
-    });
 
-
-     // Advertised tickets (limit 6)
-   app.get("/ticket/advertised", async (req, res) => {
- 
-     const result = await ticketsCollection.find({ advertised: true, approved: true }).limit(6).toArray();
-    console.log("Advertised tickets:", result); 
-    res.json(result);
-});
-
-    // Latest tickets (8)
-   app.get("/ticket/latest", async (req, res) => {
-  try {
-    const result = await ticketsCollection.find({ approved: true }).sort({ createdAt: -1 }).limit(8).toArray();
-    console.log("Latest tickets:", result); 
-    res.json(result);
-  } catch (err) {
-    console.error("tickets/latest error:", err);
-    res.status(500).json({ message: "Failed to fetch latest tickets", error: err.message });
-  }
-});
-
-     // Add ticket (vendor) 
-    app.post("/tickets", verifyJWT, async (req, res) => {
-      console.log(req.tokenEmail);
-      
-      try {
-        const payload = {
-          ...req.body,
-          createdAt: new Date(),
-          approved: false,
-          advertised: false,
-          vendorEmail: req.tokenEmail,
-        };
-        const result = await ticketsCollection.insertOne(payload);
-        res.json({ message: "Ticket added (pending approval)", insertedId: result.insertedId });
-      } catch (err) {
-        console.error("tickets POST error:", err);
-        res.status(500).json({ message: "Failed to add ticket", error: err.message });
-      }
-    });
-
-
-     // Approve ticket (admin) 
-    app.patch("/tickets/:id/approve", verifyJWT, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const result = await ticketsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { approved: true } });
-        res.json({ message: "Ticket approved", result });
-      } catch (err) {
-        console.error("tickets approve error:", err);
-        res.status(500).json({ message: "Failed to approve ticket", error: err.message });
-      }
-    });
-
-    // Advertise toggle (admin) advertised <= 6
-    app.patch("/tickets/:id/advertise", verifyJWT, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const { advertise } = req.body;
-        if (advertise) {
-          const count = await ticketsCollection.countDocuments({ advertised: true });
-          if (count >= 6) return res.status(400).json({ message: "Maximum 6 advertised tickets allowed" });
-        }
-        const result = await ticketsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { advertised: !!advertise } });
-        res.json({ message: "Advertise toggled", result });
-      } catch (err) {
-        console.error("tickets advertise error:", err);
-        res.status(500).json({ message: "Failed to update advertise", error: err.message });
-      }
-    });
 
     console.log(
       'Pinged your deployment. You successfully connected to MongoDB!'
