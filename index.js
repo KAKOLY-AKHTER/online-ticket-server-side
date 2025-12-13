@@ -244,37 +244,37 @@ app.get("/admin/tickets", verifyJWT, verifyAdmin, async (req, res) => {
 });
 
 
-// Approve/Reject ticket
-app.patch("/admin/tickets/:id/approve", verifyJWT, verifyAdmin, async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { approve } = req.body;
-
-    const newStatus = approve ? "approved" : "rejected";
-
-    const result = await ticketsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { 
-         status: newStatus,     
-          approved: approve,  
-      } }
-    );
-
-    res.json({ message: `Ticket ${newStatus}`, result });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to update ticket", error: err.message });
-  }
-});
 
     app.get('/tickets', async (req, res) => {
       try {
-        const result = await ticketsCollection.find({ approved: true }).toArray(); 
+        const result = await ticketsCollection
+        .find({ status: "approved" })
+        .toArray(); 
         res.send(result);
       } catch (err) {
         res.status(500).send({ message: 'Failed to fetch tickets', err });
       }
     });
- 
+
+
+ app.patch("/admin/tickets/:id", verifyJWT, verifyAdmin, async (req, res) => {
+  try {
+    const { status } = req.body;
+
+    if (!["approved", "rejected"].includes(status)) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+
+    const result = await ticketsCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { status } }
+    );
+
+    res.json({ message: `Ticket ${status}`, result });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to update ticket" });
+  }
+});
     app.get('/tickets/:id', async (req, res) => {
       try {
         const id = req.params.id;
@@ -591,12 +591,19 @@ app.get("/bookings/:id", verifyJWT, async (req, res) => {
       { _id: booking._id },
       { $set: { status: "paid" } }
     );
+    
+    
+    
+await ticketsCollection.updateOne(
+  { _id: new ObjectId(booking.ticketId) },
+  { $inc: { availableQuantity: -booking.quantity } }
 
-    // Decrement ticket quantity exactly once (Option B)
-    await ticketsCollection.updateOne(
-      { _id: new ObjectId(booking.ticketId) },
-      { $inc: { quantity: -booking.quantity } }
-    );
+);
+
+
+
+
+
 
     res.send({ success: true });
   } catch (err) {
@@ -714,10 +721,11 @@ app.post('/bookings', verifyJWT, async (req, res) => {
       perks: ticket.perks || []
     };
 
-    await bookingsCollection.insertOne(booking);
+   const result = await bookingsCollection.insertOne(booking);
+    const updatedData=await ticketsCollection.updateOne({_id:new ObjectId(ticketId)},{$inc:{quantity:-quantity}})
   
 
-    res.send({ message: "Booking successful", booking });
+    res.send({ message: "Booking successful",updatedData });
   } catch (err) {
     res.status(500).send({ message: "Failed to book ticket", err });
   }
