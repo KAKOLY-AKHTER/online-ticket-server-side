@@ -24,17 +24,44 @@ const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster
 
 const app = express()
 // middleware
+// app.use(
+//   cors({
+//     origin: [
+//       process.env.DOMAIN_KEY,
+//       process.env.LOCAL_KEY,
+//       "https://teal-macaron-25515f.netlify.app"
+
+//     ],
+//     credentials: true,
+//     optionSuccessStatus: 200,
+//   })
+// )
+
+
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://teal-macaron-25515f.netlify.app"
+];
+
 app.use(
   cors({
-    origin: [
-      process.env.DOMAIN_KEY,
-      process.env.LOCAL_KEY
+    origin: function (origin, callback) {
+      // allow requests with no origin (like mobile apps, curl)
+      if (!origin) return callback(null, true);
 
-    ],
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
-    optionSuccessStatus: 200,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"]
   })
-)
+);
+
+
 app.use(express.json())
 
 // jwt middlewares

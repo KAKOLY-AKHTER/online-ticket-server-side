@@ -5,7 +5,7 @@ This is the **backend** of the Online Ticket Booking Platform.
 It handles **authentication, booking logic, payment intent creation, and transaction storage**.
 
 ## 🌐 Live URL
-[https://your-backend-live-url.com](https://your-backend-live-url.com)
+[https://online-ticket-booking-azure.vercel.app]
 
 ## 🚀 Key Features
 - 🔐 **JWT Authentication & Role-based Access**
