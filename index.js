@@ -162,7 +162,8 @@ async function run() {
     // .............vendor.............
 
     app.get('/vendor/tickets', verifyJWT, verifyVendor, async (req, res) => {
-      const email = req.query.email;
+      // const email = req.query.email;
+      const email = req.tokenEmail;
       if (!email) return res.status(400).send({ message: "Email is required" });
 
       const tickets = await ticketsCollection.find({ vendorEmail: email }).toArray();
@@ -170,8 +171,15 @@ async function run() {
     });
 
     app.delete("/vendor/tickets/:id", verifyJWT, verifyVendor, async (req, res) => {
+      const vendor = await usersCollection.findOne({ email: req.tokenEmail });
+      if (vendor?.status === 'blocked' || vendor?.fraud === true) {
+        return res.status(403).json({ message: "Vendor is blocked" });
+      }
       const id = req.params.id;
-      await ticketsCollection.deleteOne({ _id: new ObjectId(id) });
+      await ticketsCollection.deleteOne({
+         _id: new ObjectId(id),
+           vendorEmail: req.tokenEmail
+         });
       res.send({ message: "Ticket deleted" });
     });
 
@@ -191,6 +199,12 @@ async function run() {
     });
 
     app.patch("/vendor/tickets/:id", verifyJWT, verifyVendor, async (req, res) => {
+      const vendor = await usersCollection.findOne({ email: req.tokenEmail });
+      if (vendor?.status === 'blocked' || vendor?.fraud === true) {
+        return res.status(403).json({ message: "Vendor is blocked" });
+      }
+
+
       const id = req.params.id;
       const updateData = req.body;
 
@@ -230,6 +244,15 @@ async function run() {
 
 
     app.patch("/vendor/bookings/:id/status", verifyJWT, verifyVendor, async (req, res) => {
+      const vendor = await usersCollection.findOne({ email: req.tokenEmail });
+      if (vendor?.status === 'blocked' || vendor?.fraud === true) {
+        return res.status(403).json({ message: "Vendor is blocked" });
+      }
+
+
+
+
+
       const id = req.params.id;
       const { status } = req.body;
 
@@ -320,8 +343,8 @@ async function run() {
     app.get("/ticket/latest", async (req, res) => {
       try {
         const result = await ticketsCollection
-          .find({}).sort({createdAt:-1}).limit(8).toArray();
-          // .sort({ createdAt: -1 }).limit(8).toArray();
+          .find({}).sort({ createdAt: -1 }).limit(8).toArray();
+        // .sort({ createdAt: -1 }).limit(8).toArray();
         console.log("Latest tickets:", result);
         res.json(result);
       } catch (err) {
@@ -333,6 +356,14 @@ async function run() {
     // Add ticket (vendor) 
     app.post("/tickets", verifyJWT, async (req, res) => {
       console.log(req.tokenEmail);
+
+      
+  const vendor = await usersCollection.findOne({ email: req.tokenEmail });
+      if (vendor?.status === 'blocked' || vendor?.fraud === true) {
+        return res.status(403).json({
+          message: "You are blocked and cannot add tickets"
+        });
+      }
 
       try {
         const payload = {
@@ -444,7 +475,7 @@ async function run() {
 
       await ticketsCollection.updateMany(
         { vendorEmail: user.email },
-        { $set: { approved: false } }
+        { $set: { status: "hidden" } }
       );
 
       res.send({ message: 'Vendor marked as fraud' });
