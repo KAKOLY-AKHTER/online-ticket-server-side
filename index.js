@@ -303,7 +303,7 @@ async function run() {
       }
     });
 
-    
+
     app.get('/tickets/:id', async (req, res) => {
       try {
         const id = req.params.id;
@@ -319,7 +319,9 @@ async function run() {
     // Latest tickets (8)
     app.get("/ticket/latest", async (req, res) => {
       try {
-        const result = await ticketsCollection.find({ approved: true }).sort({ createdAt: -1 }).limit(8).toArray();
+        const result = await ticketsCollection
+          .find({}).sort({createdAt:-1}).limit(8).toArray();
+          // .sort({ createdAt: -1 }).limit(8).toArray();
         console.log("Latest tickets:", result);
         res.json(result);
       } catch (err) {
