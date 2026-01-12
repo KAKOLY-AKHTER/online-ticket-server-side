@@ -119,6 +119,9 @@ async function run() {
       next();
     };
 
+
+
+
     // Save or update a user in db
     app.post("/user", async (req, res) => {
       const { email, name, photo } = req.body;
@@ -593,7 +596,7 @@ async function run() {
 
 
 
-    app.get("/bookings/:id", verifyJWT, async (req, res) => {
+    app.get("/bookings/:id",  async (req, res) => {
       const id = req.params.id;
       const booking = await bookingsCollection.findOne({ _id: new ObjectId(id) });
       res.send(booking);
@@ -679,7 +682,7 @@ async function run() {
       }
     });
 
-    app.get('/user/bookings/details', verifyJWT, async (req, res) => {
+    app.get('/user/bookings/details',  async (req, res) => {
       try {
         const email = req.tokenEmail;
 
